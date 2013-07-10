@@ -18,6 +18,7 @@
 package shark.memstore2
 
 import java.util.concurrent.ConcurrentHashMap
+import java.util.{Map => JavaMap}
 
 import scala.collection.JavaConversions._
 import scala.collection.mutable.ConcurrentMap
@@ -35,6 +36,9 @@ class MemoryMetadataManager {
   private val _keyToStats: ConcurrentMap[String, collection.Map[Int, TablePartitionStats]] =
     new ConcurrentHashMap[String, collection.Map[Int, TablePartitionStats]]
 
+  private val _keyToTblProperties: ConcurrentMap[String, JavaMap[String, String]] =
+    new ConcurrentHashMap[String, JavaMap[String, String]]
+
   def contains(key: String) = _keyToRdd.contains(key.toLowerCase)
 
   def put(key: String, rdd: RDD[_]) {
@@ -49,6 +53,14 @@ class MemoryMetadataManager {
 
   def getStats(key: String): Option[collection.Map[Int, TablePartitionStats]] = {
     _keyToStats.get(key.toLowerCase)
+  }
+  
+  def putTblProperties(key: String, tblProp: JavaMap[String, String]) {
+    _keyToTblProperties.put(key.toLowerCase, tblProp)
+  }
+  
+  def getTblProperties(key: String): Option[JavaMap[String, String]] = {
+    _keyToTblProperties.get(key.toLowerCase)
   }
 
   /**

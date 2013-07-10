@@ -18,12 +18,13 @@
 package shark.memstore2
 
 import shark.memstore2.column.ColumnStats
-
+import shark.memstore2.filter.CacheFilter
 
 /**
  * Stores column statistics for a table partition.
  */
-class TablePartitionStats(val stats: Array[ColumnStats[_]], val numRows: Long)
+class TablePartitionStats(val stats: Array[ColumnStats[_]], val numRows: Long,  
+    val indexes : Array[CacheFilter] = null)
   extends Serializable {
 
   override def toString =

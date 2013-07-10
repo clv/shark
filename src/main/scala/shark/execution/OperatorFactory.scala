@@ -23,7 +23,7 @@ import org.apache.hadoop.hive.ql.exec.{GroupByPostShuffleOperator, GroupByPreShu
 import org.apache.hadoop.hive.ql.metadata.HiveException
 
 import shark.LogHelper
-
+import shark.parse.{GeneralOptimizationVariable, MemoryStoreSinkOptVariable}
 import spark.storage.StorageLevel
 
 
@@ -48,7 +48,9 @@ object OperatorFactory extends LogHelper {
       storageLevel: StorageLevel,
       numColumns: Int,
       useTachyon: Boolean,
-      useUnionRDD: Boolean): TerminalOperator = {
+      useUnionRDD: Boolean,
+      tblProperties: java.util.Map[String, String],
+      parentOptVar: GeneralOptimizationVariable): TerminalOperator = {
     val sinkOp = _newOperatorInstance(
       classOf[MemoryStoreSinkOperator], hiveTerminalOp).asInstanceOf[MemoryStoreSinkOperator]
     sinkOp.tableName = tableName
@@ -56,6 +58,8 @@ object OperatorFactory extends LogHelper {
     sinkOp.numColumns = numColumns
     sinkOp.useTachyon = useTachyon
     sinkOp.useUnionRDD = useUnionRDD
+    sinkOp.tblProperties = tblProperties
+    sinkOp.optVar = new MemoryStoreSinkOptVariable(parentOptVar)
     _createAndSetParents(sinkOp, hiveTerminalOp.getParentOperators).asInstanceOf[TerminalOperator]
   }
 

@@ -32,6 +32,7 @@ import org.apache.hadoop.hive.serde2.objectinspector.{ListObjectInspector, MapOb
 import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector.PrimitiveCategory
 import org.apache.hadoop.io.Writable
 
+import shark.memstore2.filter._
 import shark.LogHelper
 import shark.SharkConfVars
 import shark.memstore2.column.ColumnIterator
@@ -44,6 +45,11 @@ class ColumnarSerDe extends SerDe with LogHelper {
   var serDeParams: SerDeParameters = _
   var initialColumnSize: Int = _
   val serializeStream = new ByteStream.Output
+  var cacheFilters : Array[CacheFilter] = null
+  
+  def setCacheFilters(cacheFilters : Array[CacheFilter]) {
+    this.cacheFilters = cacheFilters
+  }
 
   override def initialize(conf: Configuration, tbl: Properties) {
     serDeParams = LazySimpleSerDe.initSerdeParams(conf, tbl, this.getClass.getName)
@@ -90,6 +96,7 @@ class ColumnarSerDe extends SerDe with LogHelper {
   override def serialize(obj: Object, objInspector: ObjectInspector): Writable = {
     if (tablePartitionBuilder == null) {
       tablePartitionBuilder = new TablePartitionBuilder(objectInspector, initialColumnSize)
+      tablePartitionBuilder.setCacheIndexes(cacheFilters)
     }
 
     tablePartitionBuilder.incrementRowCount()
@@ -102,9 +109,16 @@ class ColumnarSerDe extends SerDe with LogHelper {
       val fieldOI: ObjectInspector = field.getFieldObjectInspector
       fieldOI.getCategory match {
         case ObjectInspector.Category.PRIMITIVE =>
+          if (cacheFilters != null) {
+          	cacheFilters.foreach(cacheFilter => {
+          	  cacheFilter.buildIndex(cacheFilter.idToColumnMap(i), soi.getStructFieldData(obj, field), fieldOI)
+          	})
+          }
           tablePartitionBuilder.append(i, soi.getStructFieldData(obj, field), fieldOI)
         case other => {
           // We use LazySimpleSerDe to serialize nested data
+          // TODO: All filters can't build in the nested data, jump the index build.
+          cacheFilters.foreach(_.logWarningOnce("Can't support build index in STRUCT type column."))
           LazySimpleSerDe.serialize(
             serializeStream, soi.getStructFieldData(obj, field),
             fieldOI,

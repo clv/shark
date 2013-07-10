@@ -29,7 +29,7 @@ import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector
 import org.apache.hadoop.io.Writable
 
 import shark.memstore2.column.ColumnBuilder
-
+import shark.memstore2.filter.CacheFilter
 
 /**
  * Used to build a TablePartition. This is used in the serializer to convert a
@@ -40,13 +40,18 @@ class TablePartitionBuilder(oi: StructObjectInspector, initialColumnSize: Int)
 
   var numRows: Long = 0
   val fields: JList[_ <: StructField] = oi.getAllStructFieldRefs
-
+  var cacheIndexes: Array[CacheFilter] = null
+  
   val columnBuilders = Array.tabulate[ColumnBuilder[_]](fields.size) { i =>
     val columnBuilder = ColumnBuilder.create(fields.get(i).getFieldObjectInspector)
     columnBuilder.initialize(initialColumnSize)
     columnBuilder
   }
 
+  def setCacheIndexes(cacheIndexes : Array[CacheFilter]) {
+    this.cacheIndexes = cacheIndexes
+  }
+  
   def incrementRowCount() {
     numRows += 1
   }
@@ -54,8 +59,10 @@ class TablePartitionBuilder(oi: StructObjectInspector, initialColumnSize: Int)
   def append(columnIndex: Int, o: Object, oi: ObjectInspector) {
     columnBuilders(columnIndex).append(o, oi)
   }
-
-  def stats: TablePartitionStats = new TablePartitionStats(columnBuilders.map(_.stats), numRows)
+  
+  def stats: TablePartitionStats = {
+    new TablePartitionStats(columnBuilders.map(_.stats), numRows, cacheIndexes)
+  }
 
   def build: TablePartition = new TablePartition(numRows, columnBuilders.map(_.build))
 

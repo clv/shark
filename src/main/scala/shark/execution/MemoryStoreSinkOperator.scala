@@ -18,8 +18,8 @@
 package shark.execution
 
 import java.nio.ByteBuffer
-
-import scala.collection.mutable.ArrayBuffer
+import java.util.{HashMap => JavaHashMap}
+import scala.collection.mutable.{ArrayBuffer, HashSet, HashMap}
 import scala.reflect.BeanProperty
 
 import org.apache.hadoop.io.Writable
@@ -28,7 +28,8 @@ import shark.{SharkConfVars, SharkEnv, SharkEnvSlave, Utils}
 import shark.execution.serialization.{OperatorSerializationWrapper, JavaSerializer}
 import shark.memstore2._
 import shark.tachyon.TachyonTableWriter
-
+import shark.memstore2.filter._
+import shark.parse._
 import spark.{RDD, TaskContext}
 import spark.SparkContext._
 import spark.storage.StorageLevel
@@ -42,10 +43,14 @@ class MemoryStoreSinkOperator extends TerminalOperator {
   @BeanProperty var initialColumnSize: Int = _
   @BeanProperty var storageLevel: StorageLevel = _
   @BeanProperty var tableName: String = _
+  @BeanProperty var tblProperties: java.util.Map[String, String] = _
+ 
   @transient var useTachyon: Boolean = _
   @transient var useUnionRDD: Boolean = _
   @transient var numColumns: Int = _
 
+  var optVar: MemoryStoreSinkOptVariable = _
+  
   override def initializeOnMaster() {
     super.initializeOnMaster()
     initialColumnSize = SharkConfVars.getIntVar(localHconf, SharkConfVars.COLUMN_INITIALSIZE)
@@ -60,6 +65,18 @@ class MemoryStoreSinkOperator extends TerminalOperator {
     val inputRdd = if (parentOperators.size == 1) executeParents().head._2 else null
 
     val statsAcc = SharkEnv.sc.accumulableCollection(ArrayBuffer[(Int, TablePartitionStats)]())
+    // Init tblproperties
+    if (tblProperties != null) {
+      SharkEnv.memoryMetadataManager.putTblProperties(tableName, tblProperties)
+    }
+    else {
+      tblProperties =  SharkEnv.memoryMetadataManager.getTblProperties(tableName) match {
+        case Some(tblProperties) => tblProperties
+        case _ => new JavaHashMap[String, String]
+      }
+    }
+    // Only first time to create cached table can have table properties
+    optVar.sync(tblProperties)
     val op = OperatorSerializationWrapper(this)
 
     val tachyonWriter: TachyonTableWriter =
@@ -76,7 +93,10 @@ class MemoryStoreSinkOperator extends TerminalOperator {
       op.initializeOnSlave()
       val serde = new ColumnarSerDe
       serde.initialize(op.hconf, op.localHiveOp.getConf.getTableInfo.getProperties())
-
+      op.optVar = new MemoryStoreSinkOptVariable
+      op.optVar.sync(op.tblProperties)
+      serde.setCacheFilters(op.optVar.getCacheFilters)
+      
       // Serialize each row into the builder object.
       // ColumnarSerDe will return a TablePartitionBuilder.
       var builder: Writable = null
@@ -85,11 +105,15 @@ class MemoryStoreSinkOperator extends TerminalOperator {
       }
 
       if (builder != null) {
-        statsAcc += Tuple2(partitionIndex, builder.asInstanceOf[TablePartitionBuilder].stats)
+        val partitionBuilder = builder.asInstanceOf[TablePartitionBuilder]
+        statsAcc += Tuple2(partitionIndex, partitionBuilder.stats)
         Iterator(builder.asInstanceOf[TablePartitionBuilder].build)
       } else {
-        // Empty partition.
-        statsAcc += Tuple2(partitionIndex, new TablePartitionStats(Array(), 0))
+        // Empty partition. Don't need build index in empty partition, 
+        // it must be filtered by PartitionPruning.
+        val partitionStats = new TablePartitionStats(Array(), 0, 
+            Array.apply(new EmptyPartitionCacheFilter))
+        statsAcc += Tuple2(partitionIndex, partitionStats)
         Iterator(new TablePartition(0, Array()))
       }
     }

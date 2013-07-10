@@ -140,7 +140,7 @@ class MapJoinOperator extends CommonJoinOperator[MapJoinDesc, HiveMapJoinOperato
         partRows
       }
       if(storageLevel == StorageLevel.NONE)
-        rddForHash.unpersist 
+        rddForHash.unpersist()
       logInfo("wrappedRows size:" + wrappedRows.size)
       val collectTime = System.currentTimeMillis() - startCollect
       logInfo("HashTable collect took " + collectTime + " ms")

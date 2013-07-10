@@ -34,9 +34,10 @@ import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectIn
 import org.apache.hadoop.io.Writable
 
 import shark.{SharkConfVars, SharkEnv, Utils}
-import shark.execution.serialization.{XmlSerializer, JavaSerializer}
-import shark.memstore2.{CacheType, TablePartition, TablePartitionStats}
+import org.apache.hadoop.hive.ql.exec.{IndexCalculateHelper, MapSplitPruning}
+import shark.memstore2.{CacheType, TablePartition, TablePartitionStats, TablePartitionIterator, ColumnarStruct}
 import shark.tachyon.TachyonException
+import shark.execution.serialization._
 
 import spark.RDD
 import spark.rdd.{PartitionPruningRDD, UnionRDD}
@@ -162,9 +163,13 @@ class TableScanOperator extends TopOperator[HiveTableScanOperator] with HiveTopO
           }
           // Only test for pruning if we have stats on the column.
           val partitionStats = indexToStats(index)
-          if (partitionStats != null && partitionStats.stats != null)
-            MapSplitPruning.test(partitionStats, filterOp.conditionEvaluator)
-          else true
+          val partitionRes = if (partitionStats != null && partitionStats.stats != null)
+            								   MapSplitPruning.test(partitionStats, filterOp.conditionEvaluator)
+            								 else true
+          val filterRes = if (partitionStats != null && partitionStats.indexes != null)
+          							   		   IndexCalculateHelper.testAllIndexes(partitionStats, filterOp.conditionEvaluator)
+          							 		 else true
+          partitionRes && filterRes
         }
 
         // Do the pruning.

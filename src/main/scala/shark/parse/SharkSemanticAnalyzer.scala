@@ -161,7 +161,20 @@ class SharkSemanticAnalyzer(conf: HiveConf) extends SemanticAnalyzer(conf) with 
     optm.initialize(conf)
     pCtx = optm.optimize()
     init(pCtx)
-
+    
+    // Create optimization variable for each executor
+    val optVars = new GeneralOptimizationVariable
+    val sBuffer = new StringBuffer
+    for (i <- 0 until _resSchema.size()) {
+      val fs = _resSchema.get(i)
+      if (i != 0) {
+        sBuffer.append(",")
+      }
+      sBuffer.append(i).append(':').append(fs.getName()).append(':').append(fs.getType())
+    }
+    // Translate everything to upper-case in internal calculate.
+    optVars.putVar(OptimizationVariable.RESULT_SCHEMA, sBuffer.toString().toUpperCase())
+    
     // Replace Hive physical plan with Shark plan. This needs to happen after
     // Hive optimization.
     val hiveSinkOps = SharkSemanticAnalyzer.findAllHiveFileSinkOperators(
@@ -183,15 +196,22 @@ class SharkSemanticAnalyzer(conf: HiveConf) extends SemanticAnalyzer(conf) with 
             SharkEnv.memoryMetadataManager.get(cachedTableName) match {
               case Some(rdd) => {
                 if (hiveSinkOps.size == 1) {
+                  val storageLevelString = SharkEnv.memoryMetadataManager.getTblProperties(cachedTableName) match {
+                    case Some(tblProperties) => tblProperties.get("shark.cache.storageLevel")
+                    case _ => ""
+                  }
+                  val storageLevel = MemoryMetadataManager.getStorageLevelFromString(storageLevelString)
                   // If useUnionRDD is false, the sink op is for INSERT OVERWRITE.
                   val useUnionRDD = qb.getParseInfo.isInsertIntoTable(cachedTableName)
                   OperatorFactory.createSharkMemoryStoreOutputPlan(
                     hiveSinkOp,
                     cachedTableName,
-                    rdd.getStorageLevel,
+                    storageLevel,
                     _resSchema.size,                // numColumns
                     cacheMode == CacheType.tachyon, // use tachyon
-                    useUnionRDD)
+                    useUnionRDD,
+                    null,
+                    optVars)
                 } else {
                   throw new SemanticException(
                     "Shark does not support updating cached table(s) with multiple INSERTs")
@@ -215,7 +235,9 @@ class SharkSemanticAnalyzer(conf: HiveConf) extends SemanticAnalyzer(conf) with 
               storageLevel,
               _resSchema.size,                // numColumns
               cacheMode == CacheType.tachyon, // use tachyon
-              false)
+              false,
+              qb.getTableDesc().getTblProps(),
+              optVars)
           } else if (pctx.getContext().asInstanceOf[QueryContext].useTableRddSink) {
             OperatorFactory.createSharkRddOutputPlan(hiveSinkOps.head)
           } else {
